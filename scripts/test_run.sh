@@ -103,14 +103,33 @@ echo "=== release repository resolution tests ==="
 release_repo_from_remote_url() {
   local url="$1" repo
   case "$url" in
-    https://github.com/*/*.git) repo="${url#https://github.com/}"; echo "${repo%.git}" ;;
-    https://github.com/*/*) echo "${url#https://github.com/}" ;;
-    git@github.com:*/*.git) repo="${url#git@github.com:}"; echo "${repo%.git}" ;;
-    git@github.com:*/*) echo "${url#git@github.com:}" ;;
-    ssh://git@github.com/*/*.git) repo="${url#ssh://git@github.com/}"; echo "${repo%.git}" ;;
-    ssh://git@github.com/*/*) echo "${url#ssh://git@github.com/}" ;;
-    *) echo "" ;;
+    https://github.com/*/*.git) repo="${url#https://github.com/}"; repo="${repo%.git}" ;;
+    https://github.com/*/*) repo="${url#https://github.com/}" ;;
+    git@github.com:*/*.git) repo="${url#git@github.com:}"; repo="${repo%.git}" ;;
+    git@github.com:*/*) repo="${url#git@github.com:}" ;;
+    ssh://git@github.com/*/*.git) repo="${url#ssh://git@github.com/}"; repo="${repo%.git}" ;;
+    ssh://git@github.com/*/*) repo="${url#ssh://git@github.com/}" ;;
+    *) repo="" ;;
   esac
+  if valid_release_repo "$repo"; then
+    echo "$repo"
+  else
+    echo ""
+  fi
+}
+
+valid_release_repo() {
+  local repo="$1" owner name
+  case "$repo" in
+    */*/* | /* | */) return 1 ;;
+    */*) ;;
+    *) return 1 ;;
+  esac
+  owner="${repo%%/*}"
+  name="${repo#*/}"
+  [[ "$owner" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]] || return 1
+  [[ "$owner" != *--* ]] || return 1
+  [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]]
 }
 
 assert_eq "parse HTTPS origin with .git" "def324/lumen" \
@@ -127,6 +146,22 @@ assert_eq "parse ssh:// origin without .git" "def324/lumen" \
   "$(release_repo_from_remote_url "ssh://git@github.com/def324/lumen")"
 assert_eq "ignore non-GitHub origin" "" \
   "$(release_repo_from_remote_url "git@example.com:def324/lumen.git")"
+assert_eq "ignore GitHub origin with extra path" "" \
+  "$(release_repo_from_remote_url "https://github.com/def324/lumen/archive/main.tar.gz")"
+assert_eq "ignore GitHub origin with invalid repo characters" "" \
+  "$(release_repo_from_remote_url "https://github.com/def324/lumen?download=1")"
+assert_eq "reject release repo with no slash" "reject" \
+  "$(valid_release_repo "ory" && echo accept || echo reject)"
+assert_eq "ignore GitHub origin with invalid owner underscore" "" \
+  "$(release_repo_from_remote_url "https://github.com/def_324/lumen.git")"
+assert_eq "ignore GitHub origin with owner leading hyphen" "" \
+  "$(release_repo_from_remote_url "https://github.com/-def324/lumen.git")"
+assert_eq "ignore GitHub origin with owner trailing hyphen" "" \
+  "$(release_repo_from_remote_url "https://github.com/def324-/lumen.git")"
+assert_eq "ignore GitHub origin with owner double hyphen" "" \
+  "$(release_repo_from_remote_url "https://github.com/de--f324/lumen.git")"
+assert_eq "ignore GitHub origin with owner over 39 characters" "" \
+  "$(release_repo_from_remote_url "https://github.com/abcdefghijklmnopqrstuvwxyzabcdefghijklmn/lumen.git")"
 
 echo ""
 echo "=== arch normalisation tests ==="

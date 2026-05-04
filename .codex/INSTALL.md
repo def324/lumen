@@ -69,7 +69,18 @@ cd "${CODEX_HOME:-$HOME/.codex}/lumen" && git pull
 
 ```bash
 codex mcp remove lumen
-rm -rf "$HOME/.agents/skills/lumen"
+skills="$HOME/.agents/skills/lumen"
+if [ -L "$skills" ]; then
+  target="$(readlink "$skills")"
+  case "$target" in
+    */lumen/skills) rm "$skills" ;;
+    *) echo "Refusing to remove non-Lumen skills link: $skills -> $target" >&2 ;;
+  esac
+elif [ -f "$skills/.lumen-skills-source" ]; then
+  rm -rf "$skills"
+else
+  echo "No installer-managed Lumen skills path found at $skills" >&2
+fi
 ```
 
 Remove the Lumen `SessionStart` group from

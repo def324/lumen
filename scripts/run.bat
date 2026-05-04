@@ -27,6 +27,24 @@ set "TMP_BINARY=%BINARY%.tmp"
 if not exist "%BINARY%" (
   if defined LUMEN_RELEASE_REPO (
     set "REPO=%LUMEN_RELEASE_REPO%"
+    echo(!REPO!| findstr /r "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-][A-Za-z0-9_.-]*$" >nul 2>&1
+    if errorlevel 1 (
+      echo Error: LUMEN_RELEASE_REPO must be in owner/repo form >&2
+      exit /b 1
+    )
+    for /f "tokens=1 delims=/" %%o in ("!REPO!") do set "REPO_OWNER=%%o"
+    if "!REPO_OWNER:~-1!"=="-" (
+      echo Error: LUMEN_RELEASE_REPO must be in owner/repo form >&2
+      exit /b 1
+    )
+    if not "!REPO_OWNER:~39,1!"=="" (
+      echo Error: LUMEN_RELEASE_REPO must be in owner/repo form >&2
+      exit /b 1
+    )
+    if not "!REPO_OWNER:--=!"=="!REPO_OWNER!" (
+      echo Error: LUMEN_RELEASE_REPO must be in owner/repo form >&2
+      exit /b 1
+    )
   ) else (
     set "REPO="
     set "ORIGIN_URL="
@@ -45,8 +63,16 @@ if not exist "%BINARY%" (
       )
       if defined CANDIDATE (
         if "!CANDIDATE:~-4!"==".git" set "CANDIDATE=!CANDIDATE:~0,-4!"
-        echo !CANDIDATE! | findstr /r "^[^/][^/]*/[^/][^/]*$" >nul 2>&1
-        if not errorlevel 1 set "REPO=!CANDIDATE!"
+        set "CANDIDATE_OK=0"
+        echo(!CANDIDATE!| findstr /r "^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-][A-Za-z0-9_.-]*$" >nul 2>&1
+        if not errorlevel 1 set "CANDIDATE_OK=1"
+        if "!CANDIDATE_OK!"=="1" (
+          for /f "tokens=1 delims=/" %%o in ("!CANDIDATE!") do set "CANDIDATE_OWNER=%%o"
+          if "!CANDIDATE_OWNER:~-1!"=="-" set "CANDIDATE_OK=0"
+          if not "!CANDIDATE_OWNER:~39,1!"=="" set "CANDIDATE_OK=0"
+          if not "!CANDIDATE_OWNER:--=!"=="!CANDIDATE_OWNER!" set "CANDIDATE_OK=0"
+        )
+        if "!CANDIDATE_OK!"=="1" set "REPO=!CANDIDATE!"
       )
     )
     if not defined REPO set "REPO=ory/lumen"
