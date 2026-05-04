@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1336,6 +1337,7 @@ func formatIndexStatus(out IndexStatusOutput) string {
 }
 
 func runStdio(_ *cobra.Command, _ []string) error {
+	startedAt := time.Now()
 	cfg, err := config.NewConfigService(config.DefaultConfigPath())
 	if err != nil {
 		return err
@@ -1353,11 +1355,16 @@ func runStdio(_ *cobra.Command, _ []string) error {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	logger.Info("lumen config",
-		"model", emb.ModelName(),
-		"backend", cfg.Servers()[0].Backend,
-		"freshness_ttl", cfg.FreshnessTTL().String(),
+	cwd, _ := os.Getwd()
+	logger.Info("stdio starting",
+		"pid", os.Getpid(),
+		"ppid", os.Getppid(),
+		"cwd", cwd,
+		"version", buildVersion,
 	)
+
+	runCtx, stopSignals, signalReason := newStdioRunContext()
+	defer stopSignals()
 
 	closeCtx, closeFn := context.WithCancel(context.Background())
 	indexers := &indexerCache{
@@ -1432,5 +1439,33 @@ Use this to verify a project is indexed before searching, or to check if the ind
 Note: You do NOT need to call index_status before semantic_search. Semantic search auto-indexes automatically. Only use this tool when the user explicitly asks about index status, or to diagnose why search results seem incomplete.`,
 	}, indexers.handleIndexStatus)
 
-	return server.Run(context.Background(), &mcp.StdioTransport{})
+	runErr := server.Run(runCtx, &mcp.StdioTransport{})
+	reason := stdioStopReason(runErr, signalReason())
+	logArgs := []any{
+		"pid", os.Getpid(),
+		"ppid", os.Getppid(),
+		"reason", reason,
+		"duration_ms", time.Since(startedAt).Milliseconds(),
+	}
+	if runErr != nil && !errors.Is(runErr, context.Canceled) {
+		logArgs = append(logArgs, "error", runErr)
+	}
+	logger.Info("stdio stopping", logArgs...)
+	if reason != "error" && errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return runErr
+}
+
+func stdioStopReason(err error, signalReason string) string {
+	if signalReason != "" {
+		return signalReason
+	}
+	if err == nil {
+		return "mcp_returned"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context_cancelled"
+	}
+	return "error"
 }
