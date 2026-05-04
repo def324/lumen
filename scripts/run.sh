@@ -80,4 +80,5 @@ if [ -z "$BINARY" ]; then
   echo "Installed lumen to ${BINARY}" >&2
 fi
 
+export LUMEN_PLUGIN_ROOT="${PLUGIN_ROOT}"
 exec "$BINARY" "$@"
