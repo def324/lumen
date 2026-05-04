@@ -168,8 +168,14 @@ func isLumenCodexSessionStartCommand(command string) bool {
 	if !strings.Contains(normalized, "hook session-start lumen") {
 		return false
 	}
-	return strings.Contains(normalized, "/lumen/scripts/run.sh") ||
-		strings.Contains(normalized, "/lumen/scripts/run.cmd")
+	root, ok := lumenLauncherRoot(normalized, "/scripts/run.sh")
+	if !ok {
+		root, ok = lumenLauncherRoot(normalized, "/scripts/run.cmd")
+	}
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(filepath.Base(root)), "lumen")
 }
 
 func isOwnedLumenCodexSessionStartCommand(command string, hook map[string]any, expectedCommand string) bool {
@@ -181,6 +187,18 @@ func isOwnedLumenCodexSessionStartCommand(command string, hook map[string]any, e
 		return true
 	}
 	return isLumenCodexSessionStartCommand(command)
+}
+
+func lumenLauncherRoot(command, suffix string) (string, bool) {
+	idx := strings.Index(command, suffix)
+	if idx < 0 {
+		return "", false
+	}
+	root := strings.Trim(command[:idx], `"' `)
+	if root == "" {
+		return "", false
+	}
+	return root, true
 }
 
 func shellQuoteCommandPath(path string) string {

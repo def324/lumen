@@ -153,7 +153,8 @@ opencode mcp list
 - **Claude Code** - update through Claude's plugin marketplace
 - **Cursor** - refresh or reinstall the bundled plugin through Cursor after
   updating this repository or the published package
-- **Codex** - `cd "${CODEX_HOME:-$HOME/.codex}/lumen" && git pull`
+- **Codex** - `cd "${CODEX_HOME:-$HOME/.codex}/lumen" && git pull`, then
+  rerun `./scripts/run.sh codex install`
 - **OpenCode** - update the version pin in `opencode.json` (e.g.
   `@ory/lumen-opencode@0.0.29`) and restart OpenCode
 
