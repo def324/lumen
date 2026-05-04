@@ -21,6 +21,7 @@ if not defined LUMEN_EMBED_MODEL set "LUMEN_EMBED_MODEL=ordis/jina-embeddings-v2
 
 :: Binary path
 set "BINARY=%PLUGIN_ROOT%\bin\lumen-windows-%ARCH%.exe"
+set "TMP_BINARY=%BINARY%.tmp"
 
 :: Download on first run if binary is missing
 if not exist "%BINARY%" (
@@ -52,8 +53,10 @@ if not exist "%BINARY%" (
   echo Downloading lumen !VERSION! for windows/!ARCH!... >&2
   if not exist "%PLUGIN_ROOT%\bin" mkdir "%PLUGIN_ROOT%\bin"
 
-  call curl -sfL --max-time 300 --retry 3 --retry-delay 2 "!URL!" -o "%BINARY%"
+  if exist "%TMP_BINARY%" del "%TMP_BINARY%" 2>nul
+  call curl -sfL --max-time 300 --retry 3 --retry-delay 2 "!URL!" -o "%TMP_BINARY%"
   if errorlevel 1 (
+    if exist "%TMP_BINARY%" del "%TMP_BINARY%" 2>nul
     :: Fallback: manifest version not released yet — resolve latest from GitHub API
     echo Version !VERSION! not found, resolving latest release... >&2
 
@@ -88,14 +91,23 @@ if not exist "%BINARY%" (
     set "ASSET=lumen-!VERSION:~1!-windows-!ARCH!.exe"
     set "URL=https://github.com/!REPO!/releases/download/!VERSION!/!ASSET!"
 
-    call curl -sfL --max-time 300 --retry 3 --retry-delay 2 "!URL!" -o "%BINARY%"
+    if exist "%TMP_BINARY%" del "%TMP_BINARY%" 2>nul
+    call curl -sfL --max-time 300 --retry 3 --retry-delay 2 "!URL!" -o "%TMP_BINARY%"
     if errorlevel 1 (
+      if exist "%TMP_BINARY%" del "%TMP_BINARY%" 2>nul
       echo Error: fallback download also failed >&2
       exit /b 1
     )
   )
 
+  move /Y "%TMP_BINARY%" "%BINARY%" >nul
+  if errorlevel 1 (
+    if exist "%TMP_BINARY%" del "%TMP_BINARY%" 2>nul
+    echo Error: could not install downloaded lumen binary >&2
+    exit /b 1
+  )
   echo Installed lumen to %BINARY% >&2
 )
 
+set "LUMEN_PLUGIN_ROOT=%PLUGIN_ROOT%"
 "%BINARY%" %*
