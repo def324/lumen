@@ -191,6 +191,24 @@ exit /b 0
             -ExpectedRepo 'def324/lumen' `
             -OriginUrl 'https://github.com/def324/lumen.git' `
             -PassMessage 'run.bat stdio derives first-install download repo from git origin'
+
+        Invoke-RunBatScenario `
+            -Name 'invalid-origin-fallback' `
+            -ExpectedRepo 'ory/lumen' `
+            -OriginUrl 'https://github.com/def324/lumen/archive/main.tar.gz' `
+            -PassMessage 'run.bat stdio ignores invalid GitHub origin shapes'
+
+        Invoke-RunBatScenario `
+            -Name 'invalid-owner-fallback' `
+            -ExpectedRepo 'ory/lumen' `
+            -OriginUrl 'https://github.com/def_324/lumen.git' `
+            -PassMessage 'run.bat stdio ignores invalid GitHub origin owners'
+
+        Invoke-RunBatScenario `
+            -Name 'long-owner-fallback' `
+            -ExpectedRepo 'ory/lumen' `
+            -OriginUrl 'https://github.com/abcdefghijklmnopqrstuvwxyzabcdefghijklmn/lumen.git' `
+            -PassMessage 'run.bat stdio ignores GitHub origin owners over 39 characters'
     }
 } finally {
     $env:PATH = $origPath

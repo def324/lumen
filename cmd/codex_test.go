@@ -175,6 +175,62 @@ func TestRunCodexInstall_WritesHookAndAddsMCPWhenMissing(t *testing.T) {
 	}
 }
 
+func TestRunCodexInstall_IdempotentEndToEnd(t *testing.T) {
+	home := t.TempDir()
+	pluginRoot := makeCodexPluginRoot(t, home)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("LUMEN_PLUGIN_ROOT", pluginRoot)
+	runner := &fakeRunner{getErr: exec.ErrNotFound}
+
+	if err := runCodexInstall(context.Background(), new(bytes.Buffer), new(bytes.Buffer), runner); err != nil {
+		t.Fatalf("first runCodexInstall: %v", err)
+	}
+	paths, err := resolveCodexPaths()
+	if err != nil {
+		t.Fatalf("resolveCodexPaths: %v", err)
+	}
+	firstHooks, err := os.ReadFile(paths.hooksPath)
+	if err != nil {
+		t.Fatalf("read first hooks file: %v", err)
+	}
+	firstCallCount := len(runner.calls)
+
+	runner.getErr = nil
+	runner.getOutput = []byte(fmt.Sprintf("command: %s\nargs: stdio\n", paths.launcher))
+	stdout := new(bytes.Buffer)
+	if err := runCodexInstall(context.Background(), stdout, new(bytes.Buffer), runner); err != nil {
+		t.Fatalf("second runCodexInstall: %v", err)
+	}
+
+	secondHooks, err := os.ReadFile(paths.hooksPath)
+	if err != nil {
+		t.Fatalf("read second hooks file: %v", err)
+	}
+	if string(secondHooks) != string(firstHooks) {
+		t.Fatalf("hooks changed on second install:\n%s\nwant:\n%s", secondHooks, firstHooks)
+	}
+	if !isSymlinkTo(t, paths.skillsDst, paths.skillsSrc) {
+		t.Fatalf("skills link was not preserved")
+	}
+	if !strings.Contains(stdout.String(), "Codex SessionStart hook already installed") ||
+		!strings.Contains(stdout.String(), "Codex MCP server lumen already configured") {
+		t.Fatalf("second stdout = %q, want idempotent messages", stdout.String())
+	}
+	for _, call := range runner.calls[firstCallCount:] {
+		if strings.Contains(call, " mcp add ") || strings.Contains(call, " mcp remove ") {
+			t.Fatalf("second run should not add/remove MCP, calls = %#v", runner.calls[firstCallCount:])
+		}
+	}
+	status, err := codexHookStatus(paths.hooksPath, paths.hookCommand)
+	if err != nil {
+		t.Fatalf("codexHookStatus: %v", err)
+	}
+	if status.exact != 1 || status.total != 1 {
+		t.Fatalf("hook status = %+v, want exactly one Lumen hook", status)
+	}
+}
+
 func TestRunCodexInstall_FailsWhenMCPAddFails(t *testing.T) {
 	home := t.TempDir()
 	pluginRoot := makeCodexPluginRoot(t, home)
@@ -546,6 +602,104 @@ func TestEnsureCodexSkills_RejectsMarkerOnlyCopy(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexSkills_RefusesExistingFile(t *testing.T) {
+	home := t.TempDir()
+	pluginRoot := makeCodexPluginRoot(t, home)
+	paths := codexPaths{
+		skillsSrc: filepath.Join(pluginRoot, "skills"),
+		skillsDst: filepath.Join(home, ".agents", "skills", "lumen"),
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.skillsDst), 0o755); err != nil {
+		t.Fatalf("create skills parent: %v", err)
+	}
+	if err := os.WriteFile(paths.skillsDst, []byte("user-owned"), 0o644); err != nil {
+		t.Fatalf("write existing file: %v", err)
+	}
+
+	if err := ensureCodexSkills(paths, new(bytes.Buffer)); err == nil {
+		t.Fatal("ensureCodexSkills error = nil, want refusal for existing file")
+	}
+	if got, err := os.ReadFile(paths.skillsDst); err != nil || string(got) != "user-owned" {
+		t.Fatalf("existing file changed: got=%q err=%v", got, err)
+	}
+}
+
+func TestEnsureCodexSkills_RefusesNonLumenSymlink(t *testing.T) {
+	home := t.TempDir()
+	pluginRoot := makeCodexPluginRoot(t, home)
+	paths := codexPaths{
+		skillsSrc: filepath.Join(pluginRoot, "skills"),
+		skillsDst: filepath.Join(home, ".agents", "skills", "lumen"),
+	}
+	customTarget := filepath.Join(home, "custom-skills")
+	if err := os.MkdirAll(customTarget, 0o755); err != nil {
+		t.Fatalf("create custom target: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.skillsDst), 0o755); err != nil {
+		t.Fatalf("create skills parent: %v", err)
+	}
+	if err := os.Symlink(customTarget, paths.skillsDst); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if err := ensureCodexSkills(paths, new(bytes.Buffer)); err == nil {
+		t.Fatal("ensureCodexSkills error = nil, want refusal for non-Lumen symlink")
+	}
+	if !isSymlinkTo(t, paths.skillsDst, customTarget) {
+		t.Fatalf("non-Lumen symlink was changed")
+	}
+}
+
+func TestEnsureCodexSkills_ReplacesStaleLumenSymlink(t *testing.T) {
+	home := t.TempDir()
+	oldPluginRoot := makeCodexPluginRoot(t, filepath.Join(home, "old"))
+	newPluginRoot := makeCodexPluginRoot(t, filepath.Join(home, "new"))
+	paths := codexPaths{
+		skillsSrc: filepath.Join(newPluginRoot, "skills"),
+		skillsDst: filepath.Join(home, ".agents", "skills", "lumen"),
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.skillsDst), 0o755); err != nil {
+		t.Fatalf("create skills parent: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(oldPluginRoot, "skills"), paths.skillsDst); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if err := ensureCodexSkills(paths, new(bytes.Buffer)); err != nil {
+		t.Fatalf("ensureCodexSkills: %v", err)
+	}
+	if !isSymlinkTo(t, paths.skillsDst, paths.skillsSrc) {
+		t.Fatalf("stale Lumen symlink was not replaced")
+	}
+}
+
+func TestEnsureCodexSkills_ReplacesDanglingLumenSymlink(t *testing.T) {
+	home := t.TempDir()
+	oldPluginRoot := makeCodexPluginRoot(t, filepath.Join(home, "old", "lumen"))
+	newPluginRoot := makeCodexPluginRoot(t, filepath.Join(home, "new"))
+	paths := codexPaths{
+		skillsSrc: filepath.Join(newPluginRoot, "skills"),
+		skillsDst: filepath.Join(home, ".agents", "skills", "lumen"),
+	}
+	oldSkills := filepath.Join(oldPluginRoot, "skills")
+	if err := os.MkdirAll(filepath.Dir(paths.skillsDst), 0o755); err != nil {
+		t.Fatalf("create skills parent: %v", err)
+	}
+	if err := os.Symlink(oldSkills, paths.skillsDst); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := os.RemoveAll(oldPluginRoot); err != nil {
+		t.Fatalf("remove old plugin root: %v", err)
+	}
+
+	if err := ensureCodexSkills(paths, new(bytes.Buffer)); err != nil {
+		t.Fatalf("ensureCodexSkills: %v", err)
+	}
+	if !isSymlinkTo(t, paths.skillsDst, paths.skillsSrc) {
+		t.Fatalf("dangling Lumen symlink was not replaced")
+	}
+}
+
 func makeCodexPluginRoot(t *testing.T, home string) string {
 	t.Helper()
 	pluginRoot := filepath.Join(home, "lumen")
@@ -558,11 +712,17 @@ func makeCodexPluginRoot(t *testing.T, home string) string {
 	if err := os.MkdirAll(filepath.Join(pluginRoot, "skills", "doctor"), 0o755); err != nil {
 		t.Fatalf("create doctor skill dir: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(pluginRoot, "skills", "reindex"), 0o755); err != nil {
+		t.Fatalf("create reindex skill dir: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(pluginRoot, "scripts", "run.sh"), []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
 		t.Fatalf("write run.sh: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(pluginRoot, "skills", "doctor", "SKILL.md"), []byte("---\nname: doctor\n---\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(pluginRoot, "skills", "doctor", "SKILL.md"), []byte("---\nname: doctor\n---\n\n# Lumen Doctor\n"), 0o644); err != nil {
 		t.Fatalf("write doctor skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginRoot, "skills", "reindex", "SKILL.md"), []byte("---\nname: reindex\n---\n\n# Lumen Reindex\n"), 0o644); err != nil {
+		t.Fatalf("write reindex skill: %v", err)
 	}
 	return pluginRoot
 }

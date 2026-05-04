@@ -165,8 +165,9 @@ On first Claude Code or Cursor session start, Lumen:
 2. Indexes your project in the background using Merkle tree change detection
 3. Registers a `semantic_search` MCP tool that the host can use automatically
 
-In Codex and OpenCode, the same binary download and index seeding happen on the
-first `semantic_search` call.
+In Codex, the installed `SessionStart` hook warms the index on startup, resume,
+and clear events. In OpenCode, index seeding happens on the first
+`semantic_search` call.
 
 Two shared skills are also available: `doctor` (health check) and `reindex`
 (forced re-indexing). Claude exposes them as `/lumen:doctor` and

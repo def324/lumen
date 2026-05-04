@@ -427,7 +427,25 @@ func sameFileTree(a, b string) bool {
 }
 
 func removeExistingSkillsPath(path string, info os.FileInfo) error {
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return fmt.Errorf("read existing skills link: %w", err)
+		}
+		targetPath := resolveRelativeLink(path, target)
+		if !lumenSkillsDirLooksOwned(targetPath) && !danglingLumenSkillsLinkTarget(targetPath) {
+			return fmt.Errorf("%s exists and is not an installer-managed Lumen skills link", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove stale skills link: %w", err)
+		}
+		return nil
+	}
+
 	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		if copiedSkillsMarkerPresent(path) {
+			return os.RemoveAll(path)
+		}
 		entries, err := os.ReadDir(path)
 		if err != nil {
 			return fmt.Errorf("read existing skills directory: %w", err)
@@ -437,10 +455,17 @@ func removeExistingSkillsPath(path string, info os.FileInfo) error {
 		}
 		return os.Remove(path)
 	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale skills path: %w", err)
+	return fmt.Errorf("%s exists and is not an installer-managed Lumen skills path", path)
+}
+
+func danglingLumenSkillsLinkTarget(path string) bool {
+	if _, err := os.Stat(path); err == nil {
+		return false
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false
 	}
-	return nil
+	cleaned := filepath.Clean(path)
+	return filepath.Base(cleaned) == "skills" && filepath.Base(filepath.Dir(cleaned)) == "lumen"
 }
 
 func copyCodexSkills(src, dst string) error {
@@ -478,7 +503,22 @@ func copiedSkillsMarkerMatches(path, want string) bool {
 	raw, err := os.ReadFile(filepath.Join(path, codexSkillsSourceMarker))
 	return err == nil &&
 		strings.TrimSpace(string(raw)) == want &&
-		fileExists(filepath.Join(path, "doctor", "SKILL.md"))
+		lumenSkillsDirLooksOwned(path)
+}
+
+func copiedSkillsMarkerPresent(path string) bool {
+	raw, err := os.ReadFile(filepath.Join(path, codexSkillsSourceMarker))
+	return err == nil && strings.TrimSpace(string(raw)) != "" && lumenSkillsDirLooksOwned(path)
+}
+
+func lumenSkillsDirLooksOwned(path string) bool {
+	return fileContains(filepath.Join(path, "doctor", "SKILL.md"), "# Lumen Doctor") &&
+		fileContains(filepath.Join(path, "reindex", "SKILL.md"), "# Lumen Reindex")
+}
+
+func fileContains(path, want string) bool {
+	raw, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(raw), want)
 }
 
 func parseCodexMCPOutput(out []byte) (string, []string) {

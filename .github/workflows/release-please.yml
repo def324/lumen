@@ -30,7 +30,7 @@ jobs:
     container:
       image: oryd/xgoreleaser:1.26.0-2.14.1
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ needs.release-please.outputs.release_created == 'true' && github.repository == 'ory/lumen' }}
     steps:
       - uses: actions/checkout@v4
         with:
