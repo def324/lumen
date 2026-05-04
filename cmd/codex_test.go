@@ -175,7 +175,7 @@ func TestRunCodexInstall_WritesHookAndAddsMCPWhenMissing(t *testing.T) {
 	}
 }
 
-func TestRunCodexInstall_WarnsWhenMCPAddFails(t *testing.T) {
+func TestRunCodexInstall_FailsWhenMCPAddFails(t *testing.T) {
 	home := t.TempDir()
 	pluginRoot := makeCodexPluginRoot(t, home)
 	t.Setenv("HOME", home)
@@ -189,15 +189,15 @@ func TestRunCodexInstall_WarnsWhenMCPAddFails(t *testing.T) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
 
-	if err := runCodexInstall(context.Background(), stdout, stderr, runner); err != nil {
-		t.Fatalf("runCodexInstall: %v", err)
+	if err := runCodexInstall(context.Background(), stdout, stderr, runner); err == nil {
+		t.Fatal("runCodexInstall error = nil, want MCP add error")
 	}
-	if !strings.Contains(stderr.String(), "Warning: MCP setup incomplete") {
-		t.Fatalf("stderr = %q, want MCP warning", stderr.String())
+	if strings.Contains(stderr.String(), "Warning: MCP setup incomplete") {
+		t.Fatalf("stderr = %q, want no swallowed MCP warning", stderr.String())
 	}
 }
 
-func TestRunCodexInstall_WarnsWhenSkillsSetupFails(t *testing.T) {
+func TestRunCodexInstall_FailsWhenSkillsSetupFails(t *testing.T) {
 	home := t.TempDir()
 	pluginRoot := makeCodexPluginRoot(t, home)
 	t.Setenv("HOME", home)
@@ -213,11 +213,11 @@ func TestRunCodexInstall_WarnsWhenSkillsSetupFails(t *testing.T) {
 	runner := &fakeRunner{getErr: exec.ErrNotFound}
 	stderr := new(bytes.Buffer)
 
-	if err := runCodexInstall(context.Background(), new(bytes.Buffer), stderr, runner); err != nil {
-		t.Fatalf("runCodexInstall: %v", err)
+	if err := runCodexInstall(context.Background(), new(bytes.Buffer), stderr, runner); err == nil {
+		t.Fatal("runCodexInstall error = nil, want skills setup error")
 	}
-	if !strings.Contains(stderr.String(), "Warning: skills setup incomplete") {
-		t.Fatalf("stderr = %q, want skills warning", stderr.String())
+	if strings.Contains(stderr.String(), "Warning: skills setup incomplete") {
+		t.Fatalf("stderr = %q, want no swallowed skills warning", stderr.String())
 	}
 }
 
@@ -314,7 +314,10 @@ func TestRunCodexDoctorReportsMissingStatuses(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("LUMEN_PLUGIN_ROOT", pluginRoot)
-	runner := &fakeRunner{getErr: exec.ErrNotFound}
+	runner := &fakeRunner{
+		getOutput: []byte("Error: No MCP server named 'lumen' found."),
+		getErr:    errors.New("exit status 1"),
+	}
 	stdout := new(bytes.Buffer)
 
 	if err := runCodexDoctor(context.Background(), stdout, new(bytes.Buffer), runner); err != nil {
@@ -326,6 +329,23 @@ func TestRunCodexDoctorReportsMissingStatuses(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout = %q, want %q", out, want)
 		}
+	}
+}
+
+func TestRunCodexDoctorReportsUnavailableMCPCommand(t *testing.T) {
+	home := t.TempDir()
+	pluginRoot := makeCodexPluginRoot(t, home)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("LUMEN_PLUGIN_ROOT", pluginRoot)
+	stdout := new(bytes.Buffer)
+
+	if err := runCodexDoctor(context.Background(), stdout, new(bytes.Buffer), &fakeRunner{getErr: exec.ErrNotFound}); err != nil {
+		t.Fatalf("runCodexDoctor: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), "MCP lumen: unavailable: codex command not found") {
+		t.Fatalf("stdout = %q, want unavailable MCP command", stdout.String())
 	}
 }
 
@@ -344,6 +364,36 @@ func TestRunCodexDoctorReportsMismatchedMCP(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "MCP lumen: mismatch") {
 		t.Fatalf("stdout = %q, want MCP mismatch", stdout.String())
+	}
+}
+
+func TestRunCodexDoctorReportsStaleHookMismatch(t *testing.T) {
+	home := t.TempDir()
+	pluginRoot := makeCodexPluginRoot(t, home)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("LUMEN_PLUGIN_ROOT", pluginRoot)
+	paths, err := resolveCodexPaths()
+	if err != nil {
+		t.Fatalf("resolveCodexPaths: %v", err)
+	}
+	staleCommand := codexSessionStartCommand(filepath.Join(home, "old-lumen", "scripts", "run.sh"))
+	if _, err := installCodexHookFile(paths.hooksPath, staleCommand); err != nil {
+		t.Fatalf("installCodexHookFile: %v", err)
+	}
+	runner := &fakeRunner{getOutput: []byte(fmt.Sprintf("command: %s\nargs: stdio\n", paths.launcher))}
+	stdout := new(bytes.Buffer)
+
+	if err := runCodexDoctor(context.Background(), stdout, new(bytes.Buffer), runner); err != nil {
+		t.Fatalf("runCodexDoctor: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "SessionStart hook: mismatch") {
+		t.Fatalf("stdout = %q, want stale hook mismatch", out)
+	}
+	if strings.Contains(out, "SessionStart hook: ok") {
+		t.Fatalf("stdout = %q, did not want stale hook ok", out)
 	}
 }
 

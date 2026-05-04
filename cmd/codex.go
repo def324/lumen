@@ -17,6 +17,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -197,10 +198,10 @@ func runCodexInstall(ctx context.Context, stdout, stderr io.Writer, runner comma
 		_, _ = fmt.Fprintf(stdout, "Codex SessionStart hook already installed at %s\n", paths.hooksPath)
 	}
 	if err := ensureCodexSkills(paths, stderr); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Warning: skills setup incomplete: %v\n", err)
+		return err
 	}
 	if err := ensureCodexMCP(ctx, paths, runner, stdout, stderr); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Warning: MCP setup incomplete: %v\n", err)
+		return err
 	}
 	return nil
 }
@@ -269,22 +270,32 @@ func runCodexDoctor(ctx context.Context, stdout, _ io.Writer, runner commandRunn
 
 	out, err := runner.Run(ctx, "codex", "mcp", "get", "lumen")
 	switch {
-	case err != nil:
+	case err != nil && errors.Is(err, exec.ErrNotFound):
+		_, _ = fmt.Fprintln(stdout, "MCP lumen: unavailable: codex command not found")
+	case err != nil && codexMCPGetOutputReportsMissing(out):
 		_, _ = fmt.Fprintln(stdout, "MCP lumen: missing")
+	case err != nil:
+		if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+			_, _ = fmt.Fprintf(stdout, "MCP lumen: error: %v: %s\n", err, oneLine(trimmed))
+		} else {
+			_, _ = fmt.Fprintf(stdout, "MCP lumen: error: %v\n", err)
+		}
 	case codexMCPOutputMatches(out, paths):
 		_, _ = fmt.Fprintln(stdout, "MCP lumen: ok")
 	default:
 		_, _ = fmt.Fprintln(stdout, "MCP lumen: mismatch")
 	}
 
-	hookOK, hookCount, hookErr := codexHookStatus(paths.hooksPath)
+	hookStatus, hookErr := codexHookStatus(paths.hooksPath, paths.hookCommand)
 	switch {
 	case hookErr != nil:
 		_, _ = fmt.Fprintf(stdout, "SessionStart hook: error: %v\n", hookErr)
-	case hookOK:
+	case hookStatus.exact == 1 && hookStatus.total == 1:
 		_, _ = fmt.Fprintln(stdout, "SessionStart hook: ok")
-	case hookCount > 1:
-		_, _ = fmt.Fprintf(stdout, "SessionStart hook: duplicate (%d)\n", hookCount)
+	case hookStatus.total > 1:
+		_, _ = fmt.Fprintf(stdout, "SessionStart hook: duplicate (%d)\n", hookStatus.total)
+	case hookStatus.total == 1:
+		_, _ = fmt.Fprintln(stdout, "SessionStart hook: mismatch")
 	default:
 		_, _ = fmt.Fprintln(stdout, "SessionStart hook: missing")
 	}
@@ -297,64 +308,82 @@ func runCodexDoctor(ctx context.Context, stdout, _ io.Writer, runner commandRunn
 	return nil
 }
 
-func codexHookStatus(path string) (bool, int, error) {
+type codexHookStatusResult struct {
+	exact int
+	total int
+}
+
+func codexHookStatus(path, expectedCommand string) (codexHookStatusResult, error) {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return false, 0, nil
+		return codexHookStatusResult{}, nil
 	}
 	if err != nil {
-		return false, 0, err
+		return codexHookStatusResult{}, err
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return false, 0, err
+		return codexHookStatusResult{}, err
 	}
 	hooks, ok := doc["hooks"].(map[string]any)
 	if !ok {
 		if _, exists := doc["hooks"]; exists {
-			return false, 0, fmt.Errorf("codex hooks document field %q must be an object", "hooks")
+			return codexHookStatusResult{}, fmt.Errorf("codex hooks document field %q must be an object", "hooks")
 		}
-		return false, 0, nil
+		return codexHookStatusResult{}, nil
 	}
 	rawGroups, ok := hooks["SessionStart"].([]any)
 	if !ok {
 		if _, exists := hooks["SessionStart"]; exists {
-			return false, 0, fmt.Errorf("codex hooks document field %q must be an array", "hooks.SessionStart")
+			return codexHookStatusResult{}, fmt.Errorf("codex hooks document field %q must be an array", "hooks.SessionStart")
 		}
-		return false, 0, nil
+		return codexHookStatusResult{}, nil
 	}
-	count := 0
+	status := codexHookStatusResult{}
 	for _, rawGroup := range rawGroups {
 		group, ok := rawGroup.(map[string]any)
 		if !ok {
-			return false, 0, fmt.Errorf("codex hooks document field %q must contain objects", "hooks.SessionStart")
+			return codexHookStatusResult{}, fmt.Errorf("codex hooks document field %q must contain objects", "hooks.SessionStart")
 		}
-		groupCount, err := countLumenCodexHooks(group)
+		groupStatus, err := countLumenCodexHooks(group, expectedCommand)
 		if err != nil {
-			return false, 0, err
+			return codexHookStatusResult{}, err
 		}
-		count += groupCount
+		status.exact += groupStatus.exact
+		status.total += groupStatus.total
 	}
-	return count == 1, count, nil
+	return status, nil
 }
 
-func countLumenCodexHooks(group map[string]any) (int, error) {
+func countLumenCodexHooks(group map[string]any, expectedCommand string) (codexHookStatusResult, error) {
 	hooks, ok := group["hooks"].([]any)
 	if !ok {
-		return 0, fmt.Errorf("codex hooks document field %q must contain hook arrays", "hooks.SessionStart")
+		return codexHookStatusResult{}, fmt.Errorf("codex hooks document field %q must contain hook arrays", "hooks.SessionStart")
 	}
-	count := 0
+	status := codexHookStatusResult{}
 	for _, rawHook := range hooks {
 		hook, ok := rawHook.(map[string]any)
 		if !ok {
-			return 0, fmt.Errorf("codex hooks document field %q must contain hook objects", "hooks.SessionStart.hooks")
+			return codexHookStatusResult{}, fmt.Errorf("codex hooks document field %q must contain hook objects", "hooks.SessionStart.hooks")
 		}
 		command, _ := hook["command"].(string)
-		if command != "" && isOwnedLumenCodexSessionStartCommand(command, hook, "") {
-			count++
+		if command != "" && isOwnedLumenCodexSessionStartCommand(command, hook, expectedCommand) {
+			status.total++
+			if expectedCommand != "" && command == expectedCommand {
+				status.exact++
+			}
 		}
 	}
-	return count, nil
+	return status, nil
+}
+
+func codexMCPGetOutputReportsMissing(out []byte) bool {
+	lower := strings.ToLower(string(out))
+	return strings.Contains(lower, "no mcp server named")
+}
+
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func skillsLinkOK(paths codexPaths) bool {

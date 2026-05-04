@@ -298,6 +298,33 @@ func TestMergeCodexSessionStartHook_PreservesForeignHookInMixedGroup(t *testing.
 	}
 }
 
+func TestMergeCodexSessionStartHook_ReplacesMovedUnmarkedLumenHook(t *testing.T) {
+	command := codexSessionStartCommand("/repo/lumen/scripts/run.sh")
+	raw := []byte(`{
+		"hooks": {
+			"SessionStart": [
+				{"matcher": "startup", "hooks": [{"type": "command", "command": "\"/repo/lumen fork/scripts/run.sh\" hook session-start lumen --host claude"}]}
+			]
+		}
+	}`)
+
+	out, changed, err := mergeCodexSessionStartHook(raw, command)
+	if err != nil {
+		t.Fatalf("mergeCodexSessionStartHook: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+
+	groups := codexHookGroups(t, decodeCodexHooksDocument(t, out), "SessionStart")
+	if len(groups) != 1 {
+		t.Fatalf("SessionStart groups = %d, want 1", len(groups))
+	}
+	if got := codexHookCommand(t, groups[0]); got != command {
+		t.Fatalf("command = %q, want %q", got, command)
+	}
+}
+
 func TestMergeCodexSessionStartHook_MalformedJSON(t *testing.T) {
 	out, changed, err := mergeCodexSessionStartHook([]byte(`{"hooks":`), "command")
 	if err == nil {
