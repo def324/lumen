@@ -72,6 +72,9 @@ func TestCodexPathsFromEnv(t *testing.T) {
 	if paths.hooksPath != filepath.Join(codexHome, "hooks.json") {
 		t.Fatalf("hooksPath = %q, want hooks.json under CODEX_HOME", paths.hooksPath)
 	}
+	if paths.configPath != filepath.Join(codexHome, "config.toml") {
+		t.Fatalf("configPath = %q, want config.toml under CODEX_HOME", paths.configPath)
+	}
 	if paths.skillsSrc != filepath.Join(pluginRoot, "skills") {
 		t.Fatalf("skillsSrc = %q, want skills under plugin root", paths.skillsSrc)
 	}
@@ -159,6 +162,13 @@ func TestRunCodexInstall_WritesHookAndAddsMCPWhenMissing(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "hook session-start lumen --host claude") {
 		t.Fatalf("hooks file missing session-start command:\n%s", raw)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	if !strings.Contains(string(config), "[features]\n") || !strings.Contains(string(config), "codex_hooks = true") {
+		t.Fatalf("config file missing codex_hooks feature flag:\n%s", config)
 	}
 	if !isSymlinkTo(t, filepath.Join(home, ".agents", "skills", "lumen"), filepath.Join(pluginRoot, "skills")) {
 		t.Fatalf("skills link was not installed")
@@ -339,6 +349,9 @@ func TestRunCodexDoctorReportsHookStatus(t *testing.T) {
 	if _, err := installCodexHookFile(paths.hooksPath, paths.hookCommand); err != nil {
 		t.Fatalf("installCodexHookFile: %v", err)
 	}
+	if _, err := ensureCodexHooksFeatureFlag(paths.configPath); err != nil {
+		t.Fatalf("ensureCodexHooksFeatureFlag: %v", err)
+	}
 	runner := &fakeRunner{getOutput: []byte(fmt.Sprintf("command: %s\nargs: stdio\n", paths.launcher))}
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -352,6 +365,7 @@ func TestRunCodexDoctorReportsHookStatus(t *testing.T) {
 		"Codex home: " + paths.codexHome,
 		"Lumen root: " + paths.pluginRoot,
 		"MCP lumen: ok",
+		"Codex hooks feature: ok",
 		"SessionStart hook: ok",
 		"Skills: missing",
 	} {
@@ -381,7 +395,35 @@ func TestRunCodexDoctorReportsMissingStatuses(t *testing.T) {
 	}
 
 	out := stdout.String()
-	for _, want := range []string{"MCP lumen: missing", "SessionStart hook: missing", "Skills: missing"} {
+	for _, want := range []string{"MCP lumen: missing", "Codex hooks feature: disabled", "SessionStart hook: missing", "Skills: missing"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout = %q, want %q", out, want)
+		}
+	}
+}
+
+func TestRunCodexDoctorReportsInstalledHookDisabledByFeatureFlag(t *testing.T) {
+	home := t.TempDir()
+	pluginRoot := makeCodexPluginRoot(t, home)
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("LUMEN_PLUGIN_ROOT", pluginRoot)
+	paths, err := resolveCodexPaths()
+	if err != nil {
+		t.Fatalf("resolveCodexPaths: %v", err)
+	}
+	if _, err := installCodexHookFile(paths.hooksPath, paths.hookCommand); err != nil {
+		t.Fatalf("installCodexHookFile: %v", err)
+	}
+	runner := &fakeRunner{getOutput: []byte(fmt.Sprintf("command: %s\nargs: stdio\n", paths.launcher))}
+	stdout := new(bytes.Buffer)
+
+	if err := runCodexDoctor(context.Background(), stdout, new(bytes.Buffer), runner); err != nil {
+		t.Fatalf("runCodexDoctor: %v", err)
+	}
+
+	out := stdout.String()
+	for _, want := range []string{"Codex hooks feature: disabled", "SessionStart hook: installed but disabled"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout = %q, want %q", out, want)
 		}

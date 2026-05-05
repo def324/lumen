@@ -23,10 +23,11 @@ server and Codex startup hooks.
 
 3. Restart Codex.
 
-The installer registers the `lumen` MCP server, links or copies the shared
-Lumen skills into Codex's user skill directory, and installs a user-level Codex
-`SessionStart` hook. That hook runs on startup, resume, and clear events and
-reuses Lumen's background indexer to proactively warm the project index.
+The installer enables Codex hooks in `config.toml`, registers the `lumen` MCP
+server, links or copies the shared Lumen skills into Codex's user skill
+directory, and installs a user-level Codex `SessionStart` hook. That hook runs
+on startup, resume, and clear events and reuses Lumen's background indexer to
+proactively warm the project index.
 
 ## Windows (PowerShell)
 
@@ -84,6 +85,8 @@ fi
 ```
 
 Remove the Lumen `SessionStart` group from
-`${CODEX_HOME:-$HOME/.codex}/hooks.json` if you want to remove the startup
-hook as well. Optionally delete the clone:
+`${CODEX_HOME:-$HOME/.codex}/hooks.json` if you want to remove the startup hook
+as well. If you no longer use any Codex hooks, you can also remove
+`codex_hooks = true` from the `[features]` table in
+`${CODEX_HOME:-$HOME/.codex}/config.toml`. Optionally delete the clone:
 `rm -rf "${CODEX_HOME:-$HOME/.codex}/lumen"`.

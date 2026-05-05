@@ -118,10 +118,10 @@ Follow the Codex install guide:
 
 [.codex/INSTALL.md](.codex/INSTALL.md)
 
-The installer registers the Lumen MCP server, links or copies the shared Lumen
-skills, and installs a user-level Codex `SessionStart` hook. The hook runs on
-startup, resume, and clear events and reuses Lumen's background indexer for
-proactive project index warmup.
+The installer enables Codex hooks, registers the Lumen MCP server, links or
+copies the shared Lumen skills, and installs a user-level Codex `SessionStart`
+hook. The hook runs on startup, resume, and clear events and reuses Lumen's
+background indexer for proactive project index warmup.
 
 Verify with:
 

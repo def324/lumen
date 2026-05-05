@@ -103,6 +103,149 @@ func mergeCodexSessionStartHook(raw []byte, command string) ([]byte, bool, error
 	return out, !bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(out)), nil
 }
 
+func mergeCodexHooksFeatureFlag(raw []byte) ([]byte, bool, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return []byte("[features]\ncodex_hooks = true\n"), true, nil
+	}
+
+	text := string(raw)
+	lines := strings.Split(text, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	inFeatures := false
+	featuresLine := -1
+	for i, line := range lines {
+		if table, ok := codexConfigTableName(line); ok {
+			if inFeatures {
+				break
+			}
+			inFeatures = table == "features"
+			if inFeatures {
+				featuresLine = i
+			}
+			continue
+		}
+		if !inFeatures {
+			continue
+		}
+		if key, value, ok := codexConfigKeyValue(line); ok && key == "codex_hooks" {
+			switch strings.ToLower(value) {
+			case "true":
+				return raw, false, nil
+			case "false":
+				lines[i] = setCodexHooksFeatureLine(line)
+				return []byte(strings.Join(lines, "\n") + "\n"), true, nil
+			default:
+				return nil, false, fmt.Errorf("codex config [features].codex_hooks must be true or false")
+			}
+		}
+	}
+
+	if featuresLine >= 0 {
+		lines = append(lines[:featuresLine+1], append([]string{"codex_hooks = true"}, lines[featuresLine+1:]...)...)
+		return []byte(strings.Join(lines, "\n") + "\n"), true, nil
+	}
+
+	trimmed := strings.TrimRight(text, "\n")
+	if strings.TrimSpace(trimmed) == "" {
+		return []byte("[features]\ncodex_hooks = true\n"), true, nil
+	}
+	return []byte(trimmed + "\n\n[features]\ncodex_hooks = true\n"), true, nil
+}
+
+func codexHooksFeatureEnabledInConfig(raw []byte) (bool, error) {
+	lines := strings.Split(string(raw), "\n")
+	inFeatures := false
+	for _, line := range lines {
+		if table, ok := codexConfigTableName(line); ok {
+			inFeatures = table == "features"
+			continue
+		}
+		if !inFeatures {
+			continue
+		}
+		if key, value, ok := codexConfigKeyValue(line); ok && key == "codex_hooks" {
+			switch strings.ToLower(value) {
+			case "true":
+				return true, nil
+			case "false":
+				return false, nil
+			default:
+				return false, fmt.Errorf("codex config [features].codex_hooks must be true or false")
+			}
+		}
+	}
+	return false, nil
+}
+
+func codexConfigTableName(line string) (string, bool) {
+	body, _ := splitTomlLineComment(line)
+	trimmed := strings.TrimSpace(body)
+	if !strings.HasPrefix(trimmed, "[") || !strings.HasSuffix(trimmed, "]") || strings.HasPrefix(trimmed, "[[") {
+		return "", false
+	}
+	name := strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+	return name, name != ""
+}
+
+func codexConfigKeyValue(line string) (string, string, bool) {
+	body, _ := splitTomlLineComment(line)
+	key, value, ok := strings.Cut(body, "=")
+	if !ok {
+		return "", "", false
+	}
+	normalizedKey, ok := normalizeTomlKey(strings.TrimSpace(key))
+	if !ok {
+		return "", "", false
+	}
+	return normalizedKey, strings.TrimSpace(value), true
+}
+
+func normalizeTomlKey(key string) (string, bool) {
+	if key == "codex_hooks" {
+		return key, true
+	}
+	if len(key) >= 2 && ((key[0] == '"' && key[len(key)-1] == '"') || (key[0] == '\'' && key[len(key)-1] == '\'')) {
+		unquoted := key[1 : len(key)-1]
+		if unquoted == "codex_hooks" {
+			return unquoted, true
+		}
+	}
+	return "", false
+}
+
+func setCodexHooksFeatureLine(line string) string {
+	_, comment := splitTomlLineComment(line)
+	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+	if comment != "" {
+		return indent + "codex_hooks = true " + strings.TrimSpace(comment)
+	}
+	return indent + "codex_hooks = true"
+}
+
+func splitTomlLineComment(line string) (string, string) {
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for i, r := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case inDouble && r == '\\':
+			escaped = true
+		case !inDouble && r == '\'':
+			inSingle = !inSingle
+		case !inSingle && r == '"':
+			inDouble = !inDouble
+		case !inSingle && !inDouble && r == '#':
+			return line[:i], line[i:]
+		}
+	}
+	return line, ""
+}
+
 func codexHookGroupRunsLumenSessionStart(group map[string]any) bool {
 	return codexHookGroupRunsLumenSessionStartCommand(group, "")
 }

@@ -72,6 +72,118 @@ func TestMergeCodexSessionStartHook_EmptyDocument(t *testing.T) {
 	}
 }
 
+func TestMergeCodexHooksFeatureFlag_MissingDocument(t *testing.T) {
+	out, changed, err := mergeCodexHooksFeatureFlag(nil)
+	if err != nil {
+		t.Fatalf("mergeCodexHooksFeatureFlag: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if got, want := string(out), "[features]\ncodex_hooks = true\n"; got != want {
+		t.Fatalf("config = %q, want %q", got, want)
+	}
+}
+
+func TestMergeCodexHooksFeatureFlag_AppendsFeaturesSection(t *testing.T) {
+	raw := []byte("model = \"gpt-5-codex\"\n")
+
+	out, changed, err := mergeCodexHooksFeatureFlag(raw)
+	if err != nil {
+		t.Fatalf("mergeCodexHooksFeatureFlag: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if got, want := string(out), "model = \"gpt-5-codex\"\n\n[features]\ncodex_hooks = true\n"; got != want {
+		t.Fatalf("config = %q, want %q", got, want)
+	}
+}
+
+func TestMergeCodexHooksFeatureFlag_InsertsIntoExistingFeatures(t *testing.T) {
+	raw := []byte("[features]\nexperimental = true\n\n[mcp_servers]\n")
+
+	out, changed, err := mergeCodexHooksFeatureFlag(raw)
+	if err != nil {
+		t.Fatalf("mergeCodexHooksFeatureFlag: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if got, want := string(out), "[features]\ncodex_hooks = true\nexperimental = true\n\n[mcp_servers]\n"; got != want {
+		t.Fatalf("config = %q, want %q", got, want)
+	}
+}
+
+func TestMergeCodexHooksFeatureFlag_EnablesDisabledFlag(t *testing.T) {
+	raw := []byte("[features]\n  codex_hooks = false # keep hooks enabled for Lumen\n")
+
+	out, changed, err := mergeCodexHooksFeatureFlag(raw)
+	if err != nil {
+		t.Fatalf("mergeCodexHooksFeatureFlag: %v", err)
+	}
+	if !changed {
+		t.Fatal("changed = false, want true")
+	}
+	if got, want := string(out), "[features]\n  codex_hooks = true # keep hooks enabled for Lumen\n"; got != want {
+		t.Fatalf("config = %q, want %q", got, want)
+	}
+}
+
+func TestMergeCodexHooksFeatureFlag_Idempotent(t *testing.T) {
+	raw := []byte("[features]\ncodex_hooks = true\n")
+
+	out, changed, err := mergeCodexHooksFeatureFlag(raw)
+	if err != nil {
+		t.Fatalf("mergeCodexHooksFeatureFlag: %v", err)
+	}
+	if changed {
+		t.Fatal("changed = true, want false")
+	}
+	if string(out) != string(raw) {
+		t.Fatalf("config = %q, want original %q", out, raw)
+	}
+}
+
+func TestMergeCodexHooksFeatureFlag_RejectsInvalidValue(t *testing.T) {
+	out, changed, err := mergeCodexHooksFeatureFlag([]byte("[features]\ncodex_hooks = \"yes\"\n"))
+	if err == nil {
+		t.Fatal("error = nil, want invalid value error")
+	}
+	if changed {
+		t.Fatal("changed = true, want false")
+	}
+	if out != nil {
+		t.Fatalf("out = %q, want nil", out)
+	}
+}
+
+func TestCodexHooksFeatureEnabledInConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		want    bool
+		wantErr bool
+	}{
+		{name: "missing", raw: "[features]\n", want: false},
+		{name: "disabled", raw: "[features]\ncodex_hooks = false\n", want: false},
+		{name: "enabled", raw: "[features]\ncodex_hooks = true\n", want: true},
+		{name: "commented", raw: "[features]\ncodex_hooks = true # enabled\n", want: true},
+		{name: "wrong table", raw: "[other]\ncodex_hooks = true\n", want: false},
+		{name: "invalid", raw: "[features]\ncodex_hooks = \"yes\"\n", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := codexHooksFeatureEnabledInConfig([]byte(tc.raw))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("enabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCodexLauncherPathForGOOS(t *testing.T) {
 	pluginRoot := filepath.Join("tmp", "lumen")
 

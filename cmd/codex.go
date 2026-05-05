@@ -36,6 +36,7 @@ type codexPaths struct {
 	launcher    string
 	hookCommand string
 	hooksPath   string
+	configPath  string
 	skillsSrc   string
 	skillsDst   string
 }
@@ -98,6 +99,7 @@ func resolveCodexPaths() (codexPaths, error) {
 		launcher:    launcher,
 		hookCommand: codexSessionStartCommand(launcher),
 		hooksPath:   filepath.Join(codexHome, "hooks.json"),
+		configPath:  filepath.Join(codexHome, "config.toml"),
 		skillsSrc:   filepath.Join(pluginRoot, "skills"),
 		skillsDst:   filepath.Join(home, ".agents", "skills", "lumen"),
 	}, nil
@@ -183,10 +185,81 @@ func installCodexHookFile(path, command string) (bool, error) {
 	return true, nil
 }
 
+func ensureCodexHooksFeatureFlag(path string) (bool, error) {
+	var raw []byte
+	if existing, err := os.ReadFile(path); err == nil {
+		raw = existing
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("read Codex config: %w", err)
+	}
+
+	merged, changed, err := mergeCodexHooksFeatureFlag(raw)
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	return writeFilePreservingSymlink(path, merged, ".config-*.toml")
+}
+
+func codexHooksFeatureEnabled(path string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return codexHooksFeatureEnabledInConfig(raw)
+}
+
+func writeFilePreservingSymlink(path string, data []byte, pattern string) (bool, error) {
+	targetPath := path
+	if linkTarget, err := os.Readlink(path); err == nil {
+		if filepath.IsAbs(linkTarget) {
+			targetPath = linkTarget
+		} else {
+			targetPath = filepath.Join(filepath.Dir(path), linkTarget)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return false, fmt.Errorf("create config directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(targetPath), pattern)
+	if err != nil {
+		return false, fmt.Errorf("create temp config file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return false, fmt.Errorf("write temp config file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return false, fmt.Errorf("close temp config file: %w", err)
+	}
+	if err := os.Rename(tmpName, targetPath); err != nil {
+		_ = os.Remove(tmpName)
+		return false, fmt.Errorf("replace config file: %w", err)
+	}
+	return true, nil
+}
+
 func runCodexInstall(ctx context.Context, stdout, stderr io.Writer, runner commandRunner) error {
 	paths, err := resolveCodexPaths()
 	if err != nil {
 		return err
+	}
+	featureChanged, err := ensureCodexHooksFeatureFlag(paths.configPath)
+	if err != nil {
+		return err
+	}
+	if featureChanged {
+		_, _ = fmt.Fprintf(stdout, "Enabled Codex hooks feature in %s\n", paths.configPath)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Codex hooks feature already enabled in %s\n", paths.configPath)
 	}
 	changed, err := installCodexHookFile(paths.hooksPath, paths.hookCommand)
 	if err != nil {
@@ -286,12 +359,24 @@ func runCodexDoctor(ctx context.Context, stdout, _ io.Writer, runner commandRunn
 		_, _ = fmt.Fprintln(stdout, "MCP lumen: mismatch")
 	}
 
+	featureEnabled, featureErr := codexHooksFeatureEnabled(paths.configPath)
+	switch {
+	case featureErr != nil:
+		_, _ = fmt.Fprintf(stdout, "Codex hooks feature: error: %v\n", featureErr)
+	case featureEnabled:
+		_, _ = fmt.Fprintln(stdout, "Codex hooks feature: ok")
+	default:
+		_, _ = fmt.Fprintln(stdout, "Codex hooks feature: disabled")
+	}
+
 	hookStatus, hookErr := codexHookStatus(paths.hooksPath, paths.hookCommand)
 	switch {
 	case hookErr != nil:
 		_, _ = fmt.Fprintf(stdout, "SessionStart hook: error: %v\n", hookErr)
-	case hookStatus.exact == 1 && hookStatus.total == 1:
+	case hookStatus.exact == 1 && hookStatus.total == 1 && featureEnabled:
 		_, _ = fmt.Fprintln(stdout, "SessionStart hook: ok")
+	case hookStatus.exact == 1 && hookStatus.total == 1:
+		_, _ = fmt.Fprintln(stdout, "SessionStart hook: installed but disabled")
 	case hookStatus.total > 1:
 		_, _ = fmt.Fprintf(stdout, "SessionStart hook: duplicate (%d)\n", hookStatus.total)
 	case hookStatus.total == 1:
