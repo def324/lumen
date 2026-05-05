@@ -38,7 +38,7 @@ func codexLauncherPathForGOOS(pluginRoot, goos string) string {
 }
 
 func codexSessionStartCommand(launcher string) string {
-	return shellQuoteCommandPath(launcher) + " hook session-start lumen --host claude"
+	return shellQuoteCommandPath(launcher) + " hook session-start lumen --host codex"
 }
 
 func mergeCodexSessionStartHook(raw []byte, command string) ([]byte, bool, error) {

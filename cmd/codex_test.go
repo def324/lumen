@@ -81,7 +81,7 @@ func TestCodexPathsFromEnv(t *testing.T) {
 	if paths.skillsDst != filepath.Join(home, ".agents", "skills", "lumen") {
 		t.Fatalf("skillsDst = %q, want ~/.agents/skills/lumen", paths.skillsDst)
 	}
-	if !strings.Contains(paths.hookCommand, " hook session-start lumen --host claude") {
+	if !strings.Contains(paths.hookCommand, " hook session-start lumen --host codex") {
 		t.Fatalf("hookCommand = %q, want Lumen session-start command", paths.hookCommand)
 	}
 }
@@ -160,7 +160,7 @@ func TestRunCodexInstall_WritesHookAndAddsMCPWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read hooks file: %v", err)
 	}
-	if !strings.Contains(string(raw), "hook session-start lumen --host claude") {
+	if !strings.Contains(string(raw), "hook session-start lumen --host codex") {
 		t.Fatalf("hooks file missing session-start command:\n%s", raw)
 	}
 	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))

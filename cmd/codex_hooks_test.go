@@ -202,7 +202,7 @@ func TestCodexSessionStartCommandQuotesLauncher(t *testing.T) {
 	if !strings.HasPrefix(got, `'`+launcher+`'`) {
 		t.Fatalf("command = %q, want quoted launcher prefix", got)
 	}
-	if !strings.Contains(got, " hook session-start lumen --host claude") {
+	if !strings.Contains(got, " hook session-start lumen --host codex") {
 		t.Fatalf("command = %q, want session-start invocation", got)
 	}
 }
@@ -223,7 +223,7 @@ func TestCodexSessionStartCommandEscapesSingleQuotes(t *testing.T) {
 	launcher := "/Users/franz/Code/lumen's fork/scripts/run.sh"
 
 	got := codexSessionStartCommand(launcher)
-	if want := `'/Users/franz/Code/lumen'\''s fork/scripts/run.sh' hook session-start lumen --host claude`; got != want {
+	if want := `'/Users/franz/Code/lumen'\''s fork/scripts/run.sh' hook session-start lumen --host codex`; got != want {
 		t.Fatalf("command = %q, want %q", got, want)
 	}
 }
@@ -232,7 +232,7 @@ func TestCodexSessionStartCommandEscapesWindowsExpansion(t *testing.T) {
 	launcher := `C:\Users\%USERNAME%\lumen\scripts\run.cmd`
 
 	got := codexSessionStartCommand(launcher)
-	if want := `"C:\Users\^%USERNAME^%\lumen\scripts\run.cmd" hook session-start lumen --host claude`; got != want {
+	if want := `"C:\Users\^%USERNAME^%\lumen\scripts\run.cmd" hook session-start lumen --host codex`; got != want {
 		t.Fatalf("command = %q, want %q", got, want)
 	}
 }
